@@ -66,14 +66,12 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/list') {
     const dir = normalizePath(url.searchParams.get('path') || '/');
     return withSftp((sftp) => {
-      // "/" 映射到 SFTP 登录后的默认目录：wings 的 "/" 可能是空的父目录，
-      // 而文件实际在登录默认目录（realpath('.')）里。
-      const resolveDir = dir === '/'
-        ? new Promise((resolve, reject) => sftp.realpath('.', (err, p) => err ? reject(err) : resolve(p)))
-        : Promise.resolve(dir);
-      return resolveDir.then((realDir) => new Promise((resolve, reject) => {
-        sftp.readdir(realDir, (err, list) => err ? reject(err) : resolve({ realDir, list }));
-      })).then(({ realDir, list }) => ({ path: dir, resolved: realDir, entries: list.map((e) => ({
+      // wings 的 "/" 用 readdir 列出是空的，但用 "."（登录默认目录）能列出文件；
+      // 因此 "/" 直接用 "." 去读，不再走 realpath。
+      const sftpDir = dir === '/' ? '.' : dir;
+      return new Promise((resolve, reject) => {
+        sftp.readdir(sftpDir, (err, list) => err ? reject(err) : resolve({ realDir: sftpDir, list }));
+      }).then(({ realDir, list }) => ({ path: dir, resolved: realDir, entries: list.map((e) => ({
         filename: e.filename,
         longname: e.longname,
         attrs: { size: e.attrs.size, mtime: e.attrs.mtime, mode: e.attrs.mode, uid: e.attrs.uid, gid: e.attrs.gid },
