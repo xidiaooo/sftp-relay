@@ -65,15 +65,22 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/list') {
     const dir = normalizePath(url.searchParams.get('path') || '/');
-    return withSftp((sftp) => new Promise((resolve, reject) => {
-      sftp.readdir(dir, (err, list) => err ? reject(err) : resolve(list.map((e) => ({
+    return withSftp((sftp) => {
+      // "/" 映射到 SFTP 登录后的默认目录：wings 的 "/" 可能是空的父目录，
+      // 而文件实际在登录默认目录（realpath('.')）里。
+      const resolveDir = dir === '/'
+        ? new Promise((resolve, reject) => sftp.realpath('.', (err, p) => err ? reject(err) : resolve(p)))
+        : Promise.resolve(dir);
+      return resolveDir.then((realDir) => new Promise((resolve, reject) => {
+        sftp.readdir(realDir, (err, list) => err ? reject(err) : resolve({ realDir, list }));
+      })).then(({ realDir, list }) => ({ path: dir, resolved: realDir, entries: list.map((e) => ({
         filename: e.filename,
         longname: e.longname,
         attrs: { size: e.attrs.size, mtime: e.attrs.mtime, mode: e.attrs.mode, uid: e.attrs.uid, gid: e.attrs.gid },
         isDir: (e.attrs.mode & 0o170000) === 0o040000,
-      }))));
-    }))
-      .then((entries) => sendJson(res, 200, { ok: true, path: dir, entries }))
+      })) }));
+    })
+      .then(({ path, resolved, entries }) => sendJson(res, 200, { ok: true, path, resolved, entries }))
       .catch((err) => sendJson(res, 502, { ok: false, error: String(err && err.message || err) }));
   }
 
